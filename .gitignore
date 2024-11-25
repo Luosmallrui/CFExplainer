@@ -1,0 +1,10 @@
+/root/autodl-tmp/SCcfg/processed/
+/root/autodl-tmp/counterfactual-vulnerability-detection/cfexplainer/storage
+# 忽略大文件和目录
+cfexplainer/storage/external/MSR_data_cleaned.csv
+cfexplainer/storage/external/
+cfexplainer/storage/
+cfexplainer/
+
+# 忽略临时文件
+.git/objects/pack/tmp_pack_*

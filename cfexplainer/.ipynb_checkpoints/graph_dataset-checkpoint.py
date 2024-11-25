@@ -23,82 +23,72 @@ from data_pre import bigvul
 
 
 class VulGraphDataset(Dataset):
-    def __init__(self, root: Optional[str] = "storage/processed/vul_graph_dataset",
-                 transform: Optional[Callable] = None, pre_transform: Optional[Callable] = None,
-                 pre_filter: Optional[Callable] = None, log: bool = True,
-                 encoder=None, tokenizer=None, partition=None,
-                 vulonly=False, sample=-1, splits="default",
+    def __init__(self, root: Optional[str] = "storage/processed/vul_graph_dataset", 
+                 transform: Optional[Callable] = None, pre_transform: Optional[Callable] = None, pre_filter: Optional[Callable] = None, log: bool = True, 
+                 encoder = None, tokenizer = None, partition = None,
+                 vulonly = False, sample = -1, splits = "default",
                  ):
         os.makedirs(root, exist_ok=True)
-
+        
         self.encoder = encoder
         self.word_embeddings = self.encoder.roberta.embeddings.word_embeddings.weight.detach().cpu().numpy() if self.encoder is not None else None
-
+        
         self.tokenizer = tokenizer
         self.partition = partition
-
+        
         self.vulonly = vulonly
         self.sample = sample
         self.splits = splits
-
+        
         super().__init__(root, transform, pre_transform, pre_filter, log)
-
+        
         self.data_list = torch.load(self.processed_paths[0])
-
+        
     @property
     def processed_dir(self) -> str:
         return osp.join(self.root, f'{self.partition}_processed')
-
+    
     @property
     def processed_file_names(self) -> Union[str, List[str], Tuple]:
         return 'data.pt'
-
+    
     def process(self):
+        # 在开始处添加目录检查
+        base_dir = utils.processed_dir() / "bigvul/before"
+        print(f"Checking base directory: {base_dir}")
+        print(f"Base directory exists: {base_dir.exists()}")
+    
+        if base_dir.exists():
+           print("Contents of base directory:")
+           # print(list(base_dir.glob("*")))
+        
         # Get finished samples
         self.finished = [
             int(Path(i).name.split(".")[0])
             for i in glob(str(utils.processed_dir() / "bigvul/before/*nodes*"))
         ]
-
-        # 添加调试信息
-        print("Number of finished samples:", len(self.finished))
-
         self.df = bigvul(splits=self.splits)
-        # 检查初始DataFrame的列
-        print("Initial DataFrame columns:", self.df.columns.tolist())
-        print("Initial DataFrame shape:", self.df.shape)
-
         self.df = self.df[self.df.label == self.partition]
-        # 检查过滤后的DataFrame
-        print(f"After partition filter ({self.partition}) shape:", self.df.shape)
-
         self.df = self.df[self.df.id.isin(self.finished)]
-        # 检查finished过滤后的DataFrame
-        print("After finished filter shape:", self.df.shape)
 
         # Balance set
         vul = self.df[self.df.vul == 1]
         nonvul = self.df[self.df.vul == 0].sample(len(vul), random_state=0)
         self.df = pd.concat([vul, nonvul])
-        print("After balancing shape:", self.df.shape)
 
         # Small sample (for debugging):
         if self.sample > 0:
             self.df = self.df.sample(self.sample, random_state=0)
-            print("After sampling shape:", self.df.shape)
 
         # Filter only vulnerable
         if self.vulonly:
             self.df = self.df[self.df.vul == 1]
-            print("After vulonly filter shape:", self.df.shape)
 
         # Filter out samples with no lineNumber from Joern output
         self.df["valid"] = utils.dfmp(
             self.df, VulGraphDataset.check_validity, "id", desc="Validate Samples: "
         )
         self.df = self.df[self.df.valid]
-        print("After validity filter shape:", self.df.shape)
-        print("Final DataFrame columns:", self.df.columns.tolist())
 
         # Get mapping from index to sample ID.
         self.df = self.df.reset_index(drop=True).reset_index()
@@ -112,7 +102,7 @@ class VulGraphDataset(Dataset):
             x = np.array(list(n.subseq_feat.values))
             edge_index = np.array(e)
             code_graph = Data(x=torch.FloatTensor(x), edge_index=torch.LongTensor(edge_index))
-
+            
             n["vuln"] = n.id.map(self.get_vuln_indices(_id)).fillna(0)
             code_graph.__setitem__("_VULN", torch.Tensor(n["vuln"].astype(int).to_numpy()))
             code_graph.__setitem__("_LINE", torch.Tensor(n["id"].astype(int).to_numpy()))
@@ -121,21 +111,21 @@ class VulGraphDataset(Dataset):
 
         print('Saving...')
         torch.save(data_list, self.processed_paths[0])
-
+        
     def len(self) -> int:
         return len(self.data_list)
 
     def get(self, idx: int) -> Data:
         return self.data_list[idx]
-
+    
     def itempath(_id):
         """Get itempath path from item id."""
-        # 添加调试信息
+         # 添加调试信息
         path = utils.processed_dir() / f"bigvul/before/{_id}.c"
         print(f"Looking for file: {path}")
         print(f"Path exists: {path.exists()}")
         return utils.processed_dir() / f"bigvul/before/{_id}.c"
-
+    
     def check_validity(_id):
         """Check whether sample with id=_id has node/edges.
 
@@ -166,13 +156,13 @@ class VulGraphDataset(Dataset):
         except Exception as E:
             print(E, str(VulGraphDataset.itempath(_id)))
             return False
-
+        
     def get_vuln_indices(self, _id):
         """Obtain vulnerable lines from sample ID."""
         df = self.df[self.df.id == _id]
         removed = df.removed.item()
         return dict([(i, 1) for i in removed])
-
+    
     def feature_extraction(self, filepath):
         cache_name = "_".join(str(filepath).split("/")[-3:])
         cachefp = utils.get_dir(utils.cache_dir() / "vul_graph_feat") / Path(cache_name).stem
@@ -200,8 +190,7 @@ class VulGraphDataset(Dataset):
         subseq.lineNumber = subseq.lineNumber.astype(int)
         subseq = subseq.sort_values("lineNumber")
         subseq.code = subseq.code.apply(lambda s: ' '.join(s.split()))
-        subseq.code = subseq.code.apply(
-            lambda s: [self.tokenizer.cls_token] + self.tokenizer.tokenize(s) + [self.tokenizer.sep_token])
+        subseq.code = subseq.code.apply(lambda s: [self.tokenizer.cls_token] + self.tokenizer.tokenize(s) + [self.tokenizer.sep_token])
         subseq["code_feat"] = subseq.code.apply(lambda tokens: self.tokenizer.convert_tokens_to_ids(tokens))
         subseq.code = subseq.code.apply(lambda tokens: ' '.join(tokens))
         subseq.code_feat = subseq.code_feat.apply(lambda token_ids: np.mean(self.word_embeddings[token_ids], axis=0))
@@ -291,22 +280,20 @@ if __name__ == '__main__':
         'distilbert': (DistilBertConfig, DistilBertForMaskedLM, DistilBertTokenizer),
         't5': (T5Config, T5ForConditionalGeneration, T5Tokenizer)
     }
-
+    
     model_type = "roberta"
     model_name_or_path = "microsoft/graphcodebert-base"
     tokenizer_name = "microsoft/graphcodebert-base"
-
+    
     partition = sys.argv[1]
-
+    
     config_class, model_class, tokenizer_class = MODEL_CLASSES[model_type]
     config = config_class.from_pretrained(model_name_or_path)
     tokenizer = tokenizer_class.from_pretrained(tokenizer_name)
 
-    language_model = model_class.from_pretrained(model_name_or_path, from_tf=bool('.ckpt' in model_name_or_path),
-                                                 config=config)
-
-    dataset = VulGraphDataset(root=str(utils.processed_dir() / "vul_graph_dataset"), encoder=language_model,
-                              tokenizer=tokenizer, partition=partition)
+    language_model = model_class.from_pretrained(model_name_or_path, from_tf=bool('.ckpt' in model_name_or_path), config=config)
+    
+    dataset = VulGraphDataset(root=str(utils.processed_dir() / "vul_graph_dataset"), encoder=language_model, tokenizer=tokenizer, partition=partition)
     print(dataset)
     print(dataset.data_list[0])
     print(dataset.data_list[0].x)
